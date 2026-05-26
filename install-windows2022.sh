@@ -48,15 +48,6 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
-    echo -e "${YELLOW}[INFO] QEMU is not installed yet. It will be installed automatically.${NC}"
-fi
-
-if ! grep -E -q '(vmx|svm)' /proc/cpuinfo; then
-    echo -e "${YELLOW}[WARNING] CPU virtualization flag not detected.${NC}"
-    echo -e "${YELLOW}The installer may fail if KVM is not available.${NC}"
-fi
-
 if [ ! -b "$DISK" ]; then
     echo -e "${RED}[ERROR] Target disk not found: $DISK${NC}"
     echo
@@ -75,16 +66,21 @@ if [ "$confirm" != "TOOLBOXLAP" ]; then
     exit 1
 fi
 
+echo
+echo -e "${BLUE}[0/6] Cleaning old sessions...${NC}"
+pkill -f qemu-system || true
+screen -wipe || true
+
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 
 echo
-echo -e "${BLUE}[1/5] Installing required packages...${NC}"
+echo -e "${BLUE}[1/6] Installing required packages...${NC}"
 apt update -y
 apt install -y wget qemu-system-x86 screen curl
 
 echo
-echo -e "${BLUE}[2/5] Downloading Windows Server 2022 ISO...${NC}"
+echo -e "${BLUE}[2/6] Downloading Windows Server 2022 ISO...${NC}"
 if [ ! -f "$ISO_NAME" ]; then
     wget -O "$ISO_NAME" "$ISO_URL"
 else
@@ -92,14 +88,14 @@ else
 fi
 
 echo
-echo -e "${BLUE}[3/5] Detecting disks...${NC}"
+echo -e "${BLUE}[3/6] Detecting disks...${NC}"
 lsblk
 echo
 echo -e "${GREEN}Selected Disk:${NC} $DISK"
 
 echo
-echo -e "${BLUE}[4/5] Preparing VNC information...${NC}"
-SERVER_IP=$(curl -s ifconfig.me || echo "SERVER_IP")
+echo -e "${BLUE}[4/6] Getting server IPv4...${NC}"
+SERVER_IP=$(curl -4 -s ifconfig.me || hostname -I | awk '{print $1}')
 
 echo
 echo -e "${GREEN}VNC ADDRESS:${NC}"
@@ -108,17 +104,18 @@ echo
 echo -e "${GREEN}RDP AFTER WINDOWS INSTALL:${NC}"
 echo "$SERVER_IP:3389"
 echo
-echo -e "${YELLOW}Note: If VNC does not open immediately, wait 10 seconds and try again.${NC}"
+
+echo -e "${YELLOW}Note: Open VNC using IPv4 only, not IPv6.${NC}"
+echo -e "${YELLOW}If VNC does not open immediately, wait 10 seconds and try again.${NC}"
 echo
 
-echo -e "${BLUE}[5/5] Launching Windows installer with QEMU...${NC}"
+echo -e "${BLUE}[5/6] Launching Windows installer with QEMU...${NC}"
 echo
 
 screen -dmS toolboxlap-wininstall qemu-system-x86_64 \
--enable-kvm \
 -m 10G \
 -smp 2 \
--cpu host \
+-cpu qemu64 \
 -net nic \
 -net user,hostfwd=tcp::3389-:3389 \
 -localtime \
@@ -126,25 +123,37 @@ screen -dmS toolboxlap-wininstall qemu-system-x86_64 \
 -k en-us \
 -cdrom "$WORKDIR/$ISO_NAME" \
 -hda "$DISK" \
--vnc :1 \
+-vnc 0.0.0.0:1 \
 -boot d
 
-sleep 3
+sleep 5
+
+echo
+echo -e "${BLUE}[6/6] Checking QEMU status...${NC}"
 
 if screen -list | grep -q "toolboxlap-wininstall"; then
+    echo
     echo -e "${GREEN}QEMU started successfully.${NC}"
     echo
-    echo -e "${GREEN}Connect now using VNC:${NC} $SERVER_IP:5901"
+    echo -e "${GREEN}Connect now using VNC:${NC}"
+    echo "$SERVER_IP:5901"
     echo
-    echo -e "${YELLOW}To view the running installer screen:${NC}"
+    echo -e "${GREEN}After Windows installation, enable Remote Desktop inside Windows.${NC}"
+    echo -e "${GREEN}Then connect using RDP:${NC}"
+    echo "$SERVER_IP:3389"
+    echo
+    echo -e "${YELLOW}To view the running installer console:${NC}"
     echo "screen -r toolboxlap-wininstall"
     echo
     echo -e "${YELLOW}To detach from screen:${NC}"
     echo "CTRL + A then D"
 else
+    echo
     echo -e "${RED}[ERROR] QEMU failed to start.${NC}"
     echo
-    echo -e "${YELLOW}Try running this command to see the error:${NC}"
-    echo "qemu-system-x86_64 -enable-kvm -m 10G -smp 2 -cpu host -net nic -net user,hostfwd=tcp::3389-:3389 -localtime -usbdevice tablet -k en-us -cdrom $WORKDIR/$ISO_NAME -hda $DISK -vnc :1 -boot d"
+    echo -e "${YELLOW}Run this command manually to see the full error:${NC}"
+    echo
+    echo "cd $WORKDIR"
+    echo "qemu-system-x86_64 -m 10G -smp 2 -cpu qemu64 -net nic -net user,hostfwd=tcp::3389-:3389 -localtime -usbdevice tablet -k en-us -cdrom $WORKDIR/$ISO_NAME -hda $DISK -vnc 0.0.0.0:1 -boot d"
     exit 1
 fi
