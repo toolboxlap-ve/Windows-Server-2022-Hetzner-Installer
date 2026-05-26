@@ -70,7 +70,7 @@ if [ "$confirm" != "TOOLBOXLAP" ]; then
 fi
 
 echo
-echo -e "${BLUE}[0/6] Cleaning old sessions...${NC}"
+echo -e "${BLUE}[0/6] Cleaning old QEMU sessions...${NC}"
 pkill -f qemu-system || true
 screen -wipe || true
 
@@ -117,15 +117,15 @@ echo
 echo -e "${GREEN}RDP AFTER WINDOWS INSTALL:${NC}"
 echo "$SERVER_IP:3389"
 echo
-
 echo -e "${YELLOW}Note: Open VNC using IPv4 only.${NC}"
-echo -e "${YELLOW}If VNC does not open immediately, wait 10 seconds and try again.${NC}"
+echo -e "${YELLOW}Important: Keep this terminal open while Windows is installing.${NC}"
+echo -e "${YELLOW}If you close this terminal, the Windows installer will stop.${NC}"
 echo
 
 echo -e "${BLUE}[6/6] Launching Windows installer with TOOLBOXLAP KVM...${NC}"
 echo
 
-screen -dmS toolboxlap-wininstall "$QEMU_BIN" \
+"$QEMU_BIN" \
 -net nic \
 -net user,hostfwd=tcp::3389-:3389 \
 -m 10000M \
@@ -139,32 +139,3 @@ screen -dmS toolboxlap-wininstall "$QEMU_BIN" \
 -hda "$DISK" \
 -vnc :1 \
 -boot d
-
-sleep 5
-
-if screen -list | grep -q "toolboxlap-wininstall"; then
-    echo
-    echo -e "${GREEN}QEMU started successfully.${NC}"
-    echo
-    echo -e "${GREEN}Connect now using VNC:${NC}"
-    echo "$SERVER_IP:5901"
-    echo
-    echo -e "${GREEN}After Windows installation, enable Remote Desktop inside Windows.${NC}"
-    echo -e "${GREEN}Then connect using RDP:${NC}"
-    echo "$SERVER_IP:3389"
-    echo
-    echo -e "${YELLOW}To view the running installer console:${NC}"
-    echo "screen -r toolboxlap-wininstall"
-    echo
-    echo -e "${YELLOW}To detach from screen:${NC}"
-    echo "CTRL + A then D"
-else
-    echo
-    echo -e "${RED}[ERROR] QEMU failed to start.${NC}"
-    echo
-    echo -e "${YELLOW}Run this command manually to see the full error:${NC}"
-    echo
-    echo "cd /tmp"
-    echo "$QEMU_BIN -net nic -net user,hostfwd=tcp::3389-:3389 -m 10000M -localtime -enable-kvm -cpu core2duo,+nx -smp 2 -usbdevice tablet -k en-us -cdrom /tmp/$ISO_NAME -hda $DISK -vnc :1 -boot d"
-    exit 1
-fi
