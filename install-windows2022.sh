@@ -1,4 +1,11 @@
 #!/bin/bash
+
+# ==========================================
+# TOOLBOXLAP Windows Server 2022 Installer
+# Website: https://toolboxlap.com/
+# YouTube: https://www.youtube.com/channel/UCDT4fs9JwrnQIXPrXX8yHeQ
+# ==========================================
+
 set -e
 
 RED='\033[1;31m'
@@ -16,8 +23,10 @@ ISO_URL="https://software-download.microsoft.com/download/sg/20348.169.210806-23
 ISO_NAME="20348.169.210806-2348.fe_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso"
 
 WORKDIR="/tmp"
-DISK="/dev/nvme0n1"
 QEMU_BIN="/tmp/qemu-system-x86_64"
+
+# Auto-detect main disk: supports NVMe and SATA/SCSI disks
+DISK=$(lsblk -dpno NAME,SIZE,TYPE | awk '$3=="disk" {print $1, $2}' | grep -E "/dev/(sd|nvme)" | sort -k2 -hr | head -n1 | awk '{print $1}')
 
 clear
 
@@ -39,15 +48,22 @@ echo -e "${GREEN}================================================${NC}"
 echo
 
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}[ERROR] Please run as root.${NC}"
+   echo -e "${RED}[ERROR] Please run this script as root.${NC}"
    exit 1
 fi
 
-if [ ! -b "$DISK" ]; then
-    echo -e "${RED}[ERROR] Disk not found: $DISK${NC}"
+if [ -z "$DISK" ] || [ ! -b "$DISK" ]; then
+    echo -e "${RED}[ERROR] No supported target disk found.${NC}"
+    echo
+    echo -e "${YELLOW}Available disks:${NC}"
     lsblk
     exit 1
 fi
+
+echo -e "${YELLOW}Detected target disk:${NC} $DISK"
+echo
+lsblk
+echo
 
 echo -e "${RED}[WARNING] This will ERASE all data on: $DISK${NC}"
 echo -e "${YELLOW}This version uses UEFI/GPT to fix boot after restart.${NC}"
@@ -128,7 +144,7 @@ else
 fi
 
 echo
-echo -e "${BLUE}[6/7] Disk information...${NC}"
+echo -e "${BLUE}[6/7] Disk information after wipe:${NC}"
 lsblk
 echo
 echo -e "${GREEN}Selected Disk:${NC} $DISK"
@@ -143,7 +159,11 @@ echo -e "${GREEN}RDP AFTER WINDOWS INSTALL:${NC}"
 echo "$SERVER_IP:3389"
 echo
 echo -e "${YELLOW}Important: Keep this terminal open while Windows is installing.${NC}"
-echo -e "${YELLOW}After Windows finishes installing, disable Rescue Mode from Hetzner, then do hardware reset.${NC}"
+echo -e "${YELLOW}After Windows finishes installing:${NC}"
+echo "1. Shutdown Windows"
+echo "2. Disable Rescue Mode from Hetzner panel"
+echo "3. Execute automatic hardware reset"
+echo "4. Connect using RDP"
 echo
 
 echo -e "${BLUE}[7/7] Launching Windows Server 2022 installer in UEFI mode...${NC}"
