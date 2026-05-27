@@ -25,7 +25,6 @@ ISO_NAME="20348.169.210806-2348.fe_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.
 WORKDIR="/tmp"
 QEMU_BIN="/tmp/qemu-system-x86_64"
 
-# Auto-detect main disk: supports NVMe and SATA/SCSI disks
 DISK=$(lsblk -dpno NAME,SIZE,TYPE | awk '$3=="disk" {print $1, $2}' | grep -E "/dev/(sd|nvme)" | sort -k2 -hr | head -n1 | awk '{print $1}')
 
 clear
@@ -41,7 +40,7 @@ echo -e "${NC}"
 
 echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN} $CHANNEL_NAME${NC}"
-echo -e "${GREEN} Windows Server 2022 UEFI Installer for Hetzner${NC}"
+echo -e "${GREEN} Windows Server 2022 Installer for Hetzner${NC}"
 echo -e "${GREEN} Website: $WEBSITE_URL${NC}"
 echo -e "${GREEN} YouTube: $YOUTUBE_URL${NC}"
 echo -e "${GREEN}================================================${NC}"
@@ -54,8 +53,6 @@ fi
 
 if [ -z "$DISK" ] || [ ! -b "$DISK" ]; then
     echo -e "${RED}[ERROR] No supported target disk found.${NC}"
-    echo
-    echo -e "${YELLOW}Available disks:${NC}"
     lsblk
     exit 1
 fi
@@ -65,8 +62,24 @@ echo
 lsblk
 echo
 
+echo -e "${YELLOW}Choose installation boot mode:${NC}"
+echo
+echo "1) LEGACY BIOS / MBR  - Recommended first option"
+echo "2) UEFI / GPT         - Use if Legacy does not boot after restart"
+echo
+read -p "Select option [1-2]: " BOOT_CHOICE
+
+if [ "$BOOT_CHOICE" = "2" ]; then
+    BOOT_MODE="UEFI"
+else
+    BOOT_MODE="LEGACY"
+fi
+
+echo
+echo -e "${GREEN}Selected Boot Mode:${NC} $BOOT_MODE"
+echo
+
 echo -e "${RED}[WARNING] This will ERASE all data on: $DISK${NC}"
-echo -e "${YELLOW}This version uses UEFI/GPT to fix boot after restart.${NC}"
 echo
 read -p "Type TOOLBOXLAP to continue: " confirm
 
@@ -92,8 +105,14 @@ cd "$WORKDIR"
 
 echo
 echo -e "${BLUE}[1/7] Installing required packages...${NC}"
+
 apt update -y
-apt install -y wget tar curl screen gdisk util-linux ovmf
+
+if [ "$BOOT_MODE" = "UEFI" ]; then
+    apt install -y wget tar curl screen gdisk util-linux ovmf
+else
+    apt install -y wget tar curl screen gdisk util-linux
+fi
 
 echo
 echo -e "${BLUE}[2/7] Downloading TOOLBOXLAP KVM files...${NC}"
@@ -106,37 +125,55 @@ fi
 
 chmod +x "$QEMU_BIN"
 
-echo
-echo -e "${BLUE}[3/7] Finding OVMF UEFI firmware...${NC}"
-
 OVMF_CODE=""
-for f in \
-"/usr/share/OVMF/OVMF_CODE.fd" \
-"/usr/share/ovmf/OVMF.fd" \
-"/usr/share/qemu/OVMF.fd"
-do
-    if [ -f "$f" ]; then
-        OVMF_CODE="$f"
-        break
-    fi
-done
 
-if [ -z "$OVMF_CODE" ]; then
-    echo -e "${RED}[ERROR] OVMF firmware not found.${NC}"
-    exit 1
+if [ "$BOOT_MODE" = "UEFI" ]; then
+    echo
+    echo -e "${BLUE}[3/7] Finding OVMF UEFI firmware...${NC}"
+
+    for f in \
+    "/usr/share/OVMF/OVMF_CODE.fd" \
+    "/usr/share/ovmf/OVMF.fd" \
+    "/usr/share/qemu/OVMF.fd"
+    do
+        if [ -f "$f" ]; then
+            OVMF_CODE="$f"
+            break
+        fi
+    done
+
+    if [ -z "$OVMF_CODE" ]; then
+        echo -e "${RED}[ERROR] OVMF firmware not found.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}Using OVMF:${NC} $OVMF_CODE"
+else
+    echo
+    echo -e "${BLUE}[3/7] LEGACY BIOS mode selected. Skipping OVMF.${NC}"
 fi
 
-echo -e "${GREEN}Using OVMF:${NC} $OVMF_CODE"
-
 echo
-echo -e "${BLUE}[4/7] Wiping disk for clean GPT/UEFI install...${NC}"
-sgdisk --zap-all "$DISK" || true
-wipefs -a "$DISK" || true
-partprobe "$DISK" || true
+echo -e "${BLUE}[4/7] Wiping disk...${NC}"
+
+if [ "$BOOT_MODE" = "UEFI" ]; then
+    echo -e "${YELLOW}Preparing disk for GPT / UEFI install...${NC}"
+    sgdisk --zap-all "$DISK" || true
+    wipefs -a "$DISK" || true
+    partprobe "$DISK" || true
+else
+    echo -e "${YELLOW}Preparing disk for MBR / Legacy install...${NC}"
+    sgdisk --zap-all "$DISK" || true
+    wipefs -a "$DISK" || true
+    dd if=/dev/zero of="$DISK" bs=1M count=50 conv=fsync || true
+    partprobe "$DISK" || true
+fi
+
 sleep 3
 
 echo
 echo -e "${BLUE}[5/7] Downloading Windows Server 2022 ISO...${NC}"
+
 if [ ! -f "$ISO_NAME" ]; then
     wget -O "$ISO_NAME" "$ISO_URL"
 else
@@ -159,6 +196,7 @@ echo -e "${GREEN}RDP AFTER WINDOWS INSTALL:${NC}"
 echo "$SERVER_IP:3389"
 echo
 echo -e "${YELLOW}Important: Keep this terminal open while Windows is installing.${NC}"
+echo
 echo -e "${YELLOW}After Windows finishes installing:${NC}"
 echo "1. Shutdown Windows"
 echo "2. Disable Rescue Mode from Hetzner panel"
@@ -166,21 +204,38 @@ echo "3. Execute automatic hardware reset"
 echo "4. Connect using RDP"
 echo
 
-echo -e "${BLUE}[7/7] Launching Windows Server 2022 installer in UEFI mode...${NC}"
+echo -e "${BLUE}[7/7] Launching Windows Server 2022 installer...${NC}"
 echo
 
-"$QEMU_BIN" \
--net nic \
--net user,hostfwd=tcp::3389-:3389 \
--m 10000M \
--localtime \
--enable-kvm \
--cpu core2duo,+nx \
--smp 2 \
--usbdevice tablet \
--k en-us \
--bios "$OVMF_CODE" \
--cdrom "$WORKDIR/$ISO_NAME" \
--drive file="$DISK",format=raw,media=disk,if=ide \
--vnc :1 \
--boot d
+if [ "$BOOT_MODE" = "UEFI" ]; then
+    "$QEMU_BIN" \
+    -net nic \
+    -net user,hostfwd=tcp::3389-:3389 \
+    -m 10000M \
+    -localtime \
+    -enable-kvm \
+    -cpu core2duo,+nx \
+    -smp 2 \
+    -usbdevice tablet \
+    -k en-us \
+    -bios "$OVMF_CODE" \
+    -cdrom "$WORKDIR/$ISO_NAME" \
+    -drive file="$DISK",format=raw,media=disk,if=ide \
+    -vnc :1 \
+    -boot d
+else
+    "$QEMU_BIN" \
+    -net nic \
+    -net user,hostfwd=tcp::3389-:3389 \
+    -m 10000M \
+    -localtime \
+    -enable-kvm \
+    -cpu core2duo,+nx \
+    -smp 2 \
+    -usbdevice tablet \
+    -k en-us \
+    -cdrom "$WORKDIR/$ISO_NAME" \
+    -hda "$DISK" \
+    -vnc :1 \
+    -boot d
+fi
